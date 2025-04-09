@@ -2,6 +2,41 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide scrollbar for Chrome, Safari and Opera */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.scrollbar-hide {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Custom class for fading scroll edges */
+.fade-scroll-edges {
+  mask-image: linear-gradient(to bottom, 
+    black 0%,       /* Start fully visible */
+    black 50%,      /* Stay fully visible until 60% */
+    transparent 100% /* Fade out gradually to the bottom */
+  );
+  -webkit-mask-image: linear-gradient(to bottom, 
+    black 0%,
+    black 50%,
+    transparent 100%
+  );
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
 :root {
   font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
@@ -24,14 +59,6 @@ a {
 }
 a:hover {
   color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
 }
 
 h1 {
