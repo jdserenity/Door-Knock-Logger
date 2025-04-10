@@ -41,6 +41,7 @@ function App() {
   const [showStartDayModal, setShowStartDayModal] = useState(false);
   const [intervalWeatherCache, setIntervalWeatherCache] = useState({}); // { 'YYYY-MM-DD_HH:MM': { temp: number, condition: string, fetchedAt: timestamp } }
   const [isDayStarted, setIsDayStarted] = useState(false); // NEW state to control UI visibility *within* the session
+  const [uiMessage, setUiMessage] = useState({ text: '', type: '' }); // For temporary messages (e.g., errors, success)
 
   // Get the queue from localStorage
   const getQueue = () => {
@@ -227,53 +228,60 @@ function App() {
   }, [intervalWeatherCache]); // Re-create function if cache changes
 
   const handleSubmit = async (status) => {
-    // Ensure day has been started *using the session state variable*
-    if (!isDayStarted) { 
-      // This check might be redundant if buttons aren't rendered, but good safety.
+    // Ensure day has been started
+    if (!isDayStarted) {
       console.warn("Attempted to log before starting the day.");
-      alert("Please start your day first."); 
+      setUiMessage({ text: "Please start your day first.", type: 'error' });
+      setTimeout(() => setUiMessage({ text: '', type: '' }), 3000); // Clear after 3s
       return;
     }
-    
-    // --- Ensure daily questions are loaded into state before logging ---
-    // This is a fallback, normally isDayStarted check handles this.
+
+    // --- Client-side Duplicate Check ---
+    const isDuplicate = logs.some(l => l.doorNumber === doorNumber && l.streetName === streetName);
+    if (isDuplicate) {
+      console.warn(`Duplicate entry detected: ${doorNumber}, ${streetName}`);
+      setUiMessage({ text: "Duplicate entry: This address was already logged today.", type: 'error' });
+      setTimeout(() => setUiMessage({ text: '', type: '' }), 300); // Changed from 4000 to 400ms
+      return; // Prevent submission
+    }
+
+    // Ensure daily questions are loaded
     if (!dailyQuestions) {
       const savedQs = localStorage.getItem('dailyQuestions');
       if (savedQs) {
         setDailyQuestions(JSON.parse(savedQs));
       } else {
-        // This case shouldn't happen if isDayStarted is true, but handle defensively
         alert("Daily questions missing. Please restart the day.");
-        setIsDayStarted(false); // Force restart
+        setIsDayStarted(false);
         return;
       }
     }
-    
+
     const timestamp = new Date();
     const interval = getCurrentInterval(timestamp);
-    const dayOfWeek = timestamp.toLocaleDateString('en-US', { weekday: 'short' }); // "Mon", "Tue", etc.
-    
-    // Fetch weather data for the current interval
-    const weather = await fetchWeather(timestamp); 
-    const currentDailyQuestions = dailyQuestions || JSON.parse(localStorage.getItem('dailyQuestions') || '{}'); // Ensure we use current Qs
+    const dayOfWeek = timestamp.toLocaleDateString('en-US', { weekday: 'short' });
+
+    const weather = await fetchWeather(timestamp);
+    const currentDailyQuestions = dailyQuestions || JSON.parse(localStorage.getItem('dailyQuestions') || '{}');
 
     const log = {
-      date: getISODate(timestamp), // Use current date for log
+      date: getISODate(timestamp),
       dayOfWeek,
       streetName,
       doorNumber,
       status,
       timestamp: timestamp.toISOString(),
       interval,
-      weather: { temp: weather.temp, condition: weather.condition }, 
-      dailyQuestions: currentDailyQuestions // Use the questions confirmed for the day
+      weather: { temp: weather.temp, condition: weather.condition },
+      dailyQuestions: currentDailyQuestions
     };
 
     console.log("Submitting Log:", log);
     const newLogs = [log, ...logs];
     setLogs(newLogs);
-    localStorage.setItem('logs', JSON.stringify(newLogs)); 
+    localStorage.setItem('logs', JSON.stringify(newLogs));
 
+    // --- Send to Backend (No change here needed for duplicate check) ---
     if (navigator.onLine) {
       try {
         const response = await fetch('/.netlify/functions/log', {
@@ -282,12 +290,32 @@ function App() {
           body: JSON.stringify(log),
         });
         if (!response.ok) {
-          throw new Error(`Server error: ${response.status}`); 
+          // Attempt to parse error from backend
+          let backendError = `Server error: ${response.status}`;
+          try { 
+            const errorData = await response.json();
+            backendError = errorData.error || errorData.message || backendError;
+          } catch(e) { /* Ignore if response not json */ }
+          
+          // Set UI message about backend error
+          setUiMessage({ text: `Backend Error: ${backendError}`, type: 'error' });
+          setTimeout(() => setUiMessage({ text: '', type: '' }), 5000);
+          
+          // Note: We don't revert UI optimistically here, relies on sync logic/user action
+          console.error('Backend error, adding to queue potentially:', backendError);
+          // Add to queue even on backend error, sync will retry
+          const currentQueue = getQueue();
+          localStorage.setItem('logQueue', JSON.stringify([...currentQueue, log]));
         } else {
           console.log("Log sent successfully to backend.");
+          // Optional: Clear UI message on success?
+          // setUiMessage({ text: 'Log saved!', type: 'success' });
+          // setTimeout(() => setUiMessage({ text: '', type: '' }), 2000);
         }
       } catch (error) {
         console.error('Send/Network error, adding to queue:', error);
+        setUiMessage({ text: 'Network Error: Log queued.', type: 'warning' });
+        setTimeout(() => setUiMessage({ text: '', type: '' }), 3000);
         const currentQueue = getQueue();
         localStorage.setItem('logQueue', JSON.stringify([...currentQueue, log]));
       }
@@ -295,6 +323,8 @@ function App() {
       const currentQueue = getQueue();
       localStorage.setItem('logQueue', JSON.stringify([...currentQueue, log]));
       console.log('Offline: Log added to queue');
+      setUiMessage({ text: 'Offline: Log queued.', type: 'warning' });
+      setTimeout(() => setUiMessage({ text: '', type: '' }), 3000);
     }
   };
 
@@ -432,7 +462,7 @@ function App() {
           <StartDayModalContent />
       </Modal>
 
-      <div className={`w-full max-w-lg mx-auto px-6 flex flex-col h-screen ${showStartDayModal ? 'invisible' : ''}`}>
+      <div className={`w-full max-w-[390px] mx-auto px-6 flex flex-col h-screen ${showStartDayModal ? 'invisible' : ''}`}>
         {/* Fixed Header Area (Your existing UI) */}
         <div className="text-center flex-shrink-0">
           <h1 className="text-6xl font-bold mb-8">RLDLS</h1>
@@ -448,11 +478,11 @@ function App() {
                 onChange={handleStreetNameChange}
                 onBlur={() => setIsEditingStreet(false)}
                 onKeyDown={(e) => e.key === 'Enter' && setIsEditingStreet(false)}
-                className="text-4xl text-center w-full bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script']"
+                className="text-4xl text-center w-full bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script'] italic"
                 autoFocus
               />
             ) : (
-              <div className="text-4xl text-center font-['Dancing_Script']">
+              <div className="text-4xl text-center font-['Dancing_Script'] italic">
                 {streetName}
               </div>
             )}
@@ -477,11 +507,11 @@ function App() {
                   onChange={handleNumberChange}
                   onBlur={() => setIsEditingNumber(false)}
                   onKeyDown={(e) => e.key === 'Enter' && setIsEditingNumber(false)}
-                  className="text-4xl text-center w-28 bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script']"
+                  className="text-4xl text-center w-28 bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script'] italic"
                   autoFocus
                 />
               ) : (
-                <div className="text-4xl text-center border-b border-transparent w-28 font-['Dancing_Script']">
+                <div className="text-4xl text-center border-b border-transparent w-28 font-['Dancing_Script'] italic">
                   {doorNumber}
                 </div>
               )}
@@ -495,14 +525,38 @@ function App() {
             </button>
           </div>
           
+          {/* --- UI Message Area --- */}
+          {uiMessage.text && (
+            <div style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 9999,
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: '20px 40px',
+              borderRadius: '8px',
+              textAlign: 'center'
+            }}>
+              <span style={{
+                color: '#ff0000',
+                fontSize: '28px',
+                fontStyle: 'italic',
+                fontWeight: 'bold'
+              }}>
+                {uiMessage.type === 'error' && uiMessage.text.includes('Duplicate') ? 'Duplicate Entry' : uiMessage.text}
+              </span>
+            </div>
+          )}
+          
           {/* --- NEW: Action Button Area (Conditional Rendering) --- */}
-          <div className="grid grid-cols-3 gap-6 mb-10 h-[72px]"> {/* Added fixed height to prevent layout shift */} 
+          <div className="grid grid-cols-3 gap-6 mb-10 h-[52px]"> {/* Reduced height from 72px to 52px */}
             {!isDayStarted ? (
               // Show Start Day button if day hasn't started in this session
-              <div className="col-span-3"> {/* Span across all 3 columns */} 
+              <div className="col-span-3">
                 <button 
                     onClick={() => setShowStartDayModal(true)}
-                    className="w-full h-full bg-gray-600 text-white py-4 px-2 rounded-lg text-xl hover:bg-gray-500" 
+                    className="w-full h-full bg-gray-600 text-white py-2 px-2 rounded-lg text-xl hover:bg-gray-500" /* Reduced py-4 to py-2 */
                 >
                     Start Day
                 </button>
@@ -510,9 +564,9 @@ function App() {
             ) : (
               // Show action buttons if day has started
               <>
-                <button onClick={() => handleSubmit('not-home')} className="bg-yellow-600 text-white py-4 px-2 rounded-lg text-xl">Not Home</button>
-                <button onClick={() => handleSubmit('opened')} className="bg-green-600 text-white py-4 px-2 rounded-lg text-xl">Opened</button>
-                <button onClick={() => handleSubmit('estimate')} className="bg-blue-600 text-white py-4 px-2 rounded-lg text-xl">Estimate</button>
+                <button onClick={() => handleSubmit('not-home')} className="bg-yellow-600 text-white py-2 px-2 rounded-lg text-xl">Not Home</button>
+                <button onClick={() => handleSubmit('opened')} className="bg-green-600 text-white py-2 px-2 rounded-lg text-xl">Opened</button>
+                <button onClick={() => handleSubmit('estimate')} className="bg-blue-600 text-white py-2 px-2 rounded-lg text-xl">Estimate</button>
               </>
             )}
           </div>

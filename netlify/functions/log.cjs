@@ -56,6 +56,45 @@ exports.handler = async (event) => {
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
     const sheets = google.sheets({ version: 'v4', auth });
+    const spreadsheetId = process.env.SPREADSHEET_ID;
+    const sheetName = 'Sheet1';
+    
+    // --- Duplicate Check in Sheet ---
+    // Columns: Street=I (index 8), Door=J (index 9), Date=A (index 0)
+    const checkRange = `${sheetName}!A:J`; 
+    console.log(`Checking for duplicate in range ${checkRange} for ${doorNumber} ${streetName} on ${date}`);
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: checkRange,
+    });
+
+    const rows = response.data.values;
+    let isDuplicateInSheet = false;
+    if (rows) {
+      // Start from row 1 to skip header
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        // Check if row has enough columns and if date, street, and door match
+        if (row && row.length > 9 && 
+            row[0] === date &&            // Compare Date (Column A, index 0)
+            row[8] === streetName &&      // Compare Street Name (Column I, index 8)
+            row[9] === doorNumber) {      // Compare Door Number (Column J, index 9)
+          isDuplicateInSheet = true;
+          console.log(`Duplicate found in sheet at row ${i + 1}`);
+          break; // Stop checking once a duplicate is found
+        }
+      }
+    }
+
+    if (isDuplicateInSheet) {
+      // Return a specific error code (e.g., 409 Conflict) for duplicates
+      return { 
+        statusCode: 409, // 409 Conflict is appropriate for duplicate resource attempts
+        body: JSON.stringify({ error: 'Duplicate entry: This address has already been logged today in the sheet.' })
+      };
+    }
+    
+    console.log("No duplicate found in sheet. Proceeding to append.");
 
     // --- Prepare data row for Google Sheet --- 
     // Order: Date, DayOfWeek, Groomed, Mood, Jacket, Condition, Temp, Interval, Street, Door, Status, Timestamp
@@ -74,17 +113,15 @@ exports.handler = async (event) => {
       timestamp
     ];
 
-    console.log('Attempting to append to spreadsheet:', process.env.SPREADSHEET_ID);
+    console.log('Attempting to append to spreadsheet:', spreadsheetId);
     console.log('Values to append:', valuesToAppend);
 
     // --- Append data to the sheet --- 
     await sheets.spreadsheets.values.append({
-      spreadsheetId: process.env.SPREADSHEET_ID,
-      range: 'Sheet1!A:L', // Updated range for 12 columns (A to L)
+      spreadsheetId,
+      range: `${sheetName}!A:L`,
       valueInputOption: 'USER_ENTERED',
-      resource: {
-        values: [valuesToAppend], // Pass the prepared array
-      },
+      resource: { values: [valuesToAppend] },
     });
     
     console.log('Successfully appended data to spreadsheet');
