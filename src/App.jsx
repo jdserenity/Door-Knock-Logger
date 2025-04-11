@@ -42,6 +42,13 @@ function App() {
   const [intervalWeatherCache, setIntervalWeatherCache] = useState({}); // { 'YYYY-MM-DD_HH:MM': { temp: number, condition: string, fetchedAt: timestamp } }
   const [isDayStarted, setIsDayStarted] = useState(false); // NEW state to control UI visibility *within* the session
   const [uiMessage, setUiMessage] = useState({ text: '', type: '' }); // For temporary messages (e.g., errors, success)
+  const [stats, setStats] = useState({ 
+    totalHouses: 0,
+    notHomePercent: 0,
+    openedPercent: 0,
+    totalEstimates: 0,
+    avgTimeBetween: 0
+  });
 
   // Get the queue from localStorage
   const getQueue = () => {
@@ -451,6 +458,57 @@ function App() {
     }
   };
 
+  // --- Calculate Stats When Logs Change ---
+  useEffect(() => {
+    if (logs.length === 0) {
+      setStats({
+        totalHouses: 0,
+        notHomePercent: 0,
+        openedPercent: 0,
+        totalEstimates: 0,
+        avgTimeBetween: 0
+      });
+      return;
+    }
+
+    // Total houses is just the length of logs
+    const totalHouses = logs.length;
+    
+    // Count statuses
+    const notHomeCount = logs.filter(log => log.status === 'not-home').length;
+    const openedCount = logs.filter(log => log.status === 'opened').length;
+    const estimateCount = logs.filter(log => log.status === 'estimate').length;
+    
+    // Calculate percentages
+    const notHomePercent = Math.round((notHomeCount / totalHouses) * 100);
+    const openedPercent = Math.round((openedCount / totalHouses) * 100);
+    
+    // Calculate average time between entries
+    let totalTimeBetween = 0;
+    let timePoints = 0;
+    
+    for (let i = 0; i < logs.length - 1; i++) {
+      const currentTime = new Date(logs[i].timestamp).getTime();
+      const nextTime = new Date(logs[i + 1].timestamp).getTime();
+      const diffInSeconds = Math.round((currentTime - nextTime) / 1000);
+      
+      if (!isNaN(diffInSeconds) && diffInSeconds > 0) {
+        totalTimeBetween += diffInSeconds;
+        timePoints++;
+      }
+    }
+    
+    const avgTimeBetween = timePoints > 0 ? Math.round(totalTimeBetween / timePoints) : 0;
+    
+    setStats({
+      totalHouses,
+      notHomePercent,
+      openedPercent,
+      totalEstimates: estimateCount,
+      avgTimeBetween
+    });
+  }, [logs]);
+
   // --- Render Logic ---
   // Removed: const today = getISODate(); 
   // We use the isDayStarted state variable now for immediate UI control
@@ -480,9 +538,10 @@ function App() {
                 onKeyDown={(e) => e.key === 'Enter' && setIsEditingStreet(false)}
                 className="text-4xl text-center w-full bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script'] italic"
                 autoFocus
+                style={{fontSize: '2rem'}}
               />
             ) : (
-              <div className="text-4xl text-center font-['Dancing_Script'] italic">
+              <div className="text-4xl text-center font-['Dancing_Script'] italic" style={{fontSize: '2rem'}}>
                 {streetName}
               </div>
             )}
@@ -509,9 +568,10 @@ function App() {
                   onKeyDown={(e) => e.key === 'Enter' && setIsEditingNumber(false)}
                   className="text-4xl text-center w-28 bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script'] italic"
                   autoFocus
+                  style={{fontSize: '2rem'}}
                 />
               ) : (
-                <div className="text-4xl text-center border-b border-transparent w-28 font-['Dancing_Script'] italic">
+                <div className="text-4xl text-center border-b border-transparent w-28 font-['Dancing_Script'] italic" style={{fontSize: '2rem'}}>
                   {doorNumber}
                 </div>
               )}
@@ -584,6 +644,43 @@ function App() {
             />
           ))}
         </div>
+        
+        {/* Stats Section - Fixed at the bottom */}
+        {isDayStarted && (
+          <div style={{
+            position: 'fixed',
+            bottom: 5,
+            left: 0,
+            width: '100%',
+            display: 'flex',
+            justifyContent: 'center',
+            zIndex: 10
+          }}>
+            <table style={{
+              maxWidth: '390px',
+              width: '100%',
+              borderTopLeftRadius: '8px',
+              borderTopRightRadius: '8px'
+            }}>
+              <tbody>
+                <tr>
+                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalHouses}</b></td>
+                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.notHomePercent}%</b></td>
+                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.openedPercent}%</b></td>
+                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalEstimates}</b></td>
+                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.avgTimeBetween}s</b></td>
+                </tr>
+                <tr>
+                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Houses</td>
+                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Not Home</td>
+                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Opened</td>
+                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Estimates</td>
+                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Avg Time</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
