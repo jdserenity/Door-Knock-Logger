@@ -41,7 +41,7 @@ function App() {
   const [showStartDayModal, setShowStartDayModal] = useState(false);
   const [intervalWeatherCache, setIntervalWeatherCache] = useState({}); // { 'YYYY-MM-DD_HH:MM': { temp: number, condition: string, fetchedAt: timestamp } }
   const [isDayStarted, setIsDayStarted] = useState(false); // NEW state to control UI visibility *within* the session
-  const [uiMessage, setUiMessage] = useState({ text: '', type: '' }); // For temporary messages (e.g., errors, success)
+  const [uiMessage, setUiMessage] = useState({ text: '', type: '' });
   const [stats, setStats] = useState({ 
     totalHouses: 0,
     notHomePercent: 0,
@@ -49,6 +49,8 @@ function App() {
     totalEstimates: 0,
     avgTimeBetween: 0
   });
+  const [isLoadingLastLog, setIsLoadingLastLog] = useState(false); // Loading state
+  const [uiReady, setUiReady] = useState(false); // New state to synchronize UI rendering
 
   // Get the queue from localStorage
   const getQueue = () => {
@@ -68,73 +70,275 @@ function App() {
     const savedWeatherCache = localStorage.getItem('intervalWeatherCache');
     if (savedWeatherCache) setIntervalWeatherCache(JSON.parse(savedWeatherCache));
 
-    // Load daily state *without* setting isDayStarted based on it
+    // Load daily state and check if the day is already started
     const savedLastStartDate = localStorage.getItem('lastStartDate');
     const savedDailyQuestions = localStorage.getItem('dailyQuestions');
     const today = getISODate();
 
     if (savedLastStartDate === today && savedDailyQuestions) {
-      // Load the data into state, but DON'T set isDayStarted here
+      // Load the data into state, but DON'T set isDayStarted here for development
       setDailyQuestions(JSON.parse(savedDailyQuestions));
-      setLastStartDate(savedLastStartDate); // Keep track of the last actual start date
+      setLastStartDate(savedLastStartDate);
       console.log("Loaded data for already started day, but requires manual start in this session (for testing).");
-      // setIsDayStarted(true); // <--- REMOVED THIS LINE
+      // setIsDayStarted(true); // <--- COMMENTED OUT FOR DEV, RESTORE FOR PRODUCTION
     } else {
       // If it's a new day or data is missing, clear potentially stale daily data
       console.log("New day or missing daily data. Requires 'Start Day'.");
-      setIsDayStarted(false); // Ensure session state is false
+      setIsDayStarted(false);
       setDailyQuestions(null);
       localStorage.removeItem('dailyQuestions');
-      // Optionally clear weather cache for a new day
-      // setIntervalWeatherCache({});
-      // localStorage.removeItem('intervalWeatherCache');
+      
+      // Reset stats to 0 when Start Day button is present
+      setStats({
+        totalHouses: 0,
+        notHomePercent: 0,
+        openedPercent: 0,
+        totalEstimates: 0,
+        avgTimeBetween: 0
+      });
     }
 
   }, []); // Run only on mount
 
+  // Add debugging for state changes
+  useEffect(() => {
+    console.log(`isEditingNumber state changed to: ${isEditingNumber}`);
+  }, [isEditingNumber]);
+
+  useEffect(() => {
+    console.log(`isEditingStreet state changed to: ${isEditingStreet}`);
+  }, [isEditingStreet]);
+  
+  useEffect(() => {
+    console.log(`doorNumber state changed to: ${doorNumber}`);
+  }, [doorNumber]);
+
   const handleNumberChange = (e) => {
     const value = e.target.value.replace(/[^0-9]/g, '');
-    if (value) {
-      setDoorNumber(value);
+    console.log(`handleNumberChange: input value = "${value}"`);
+    setDoorNumber(value); // Allow empty string during editing
+    if (value) { // Only save non-empty values to localStorage
       localStorage.setItem('doorNumber', value);
     }
   };
 
   const handleStreetNameChange = (e) => {
-    setStreetName(e.target.value);
-    localStorage.setItem('streetName', e.target.value);
+    const value = e.target.value;
+    console.log(`handleStreetNameChange: input value = "${value}"`);
+    setStreetName(value);
+    if (value) { // Only save non-empty values to localStorage
+      localStorage.setItem('streetName', value);
+    }
   };
 
-  const incrementNumber = () => {
-    const newValue = String(Number(doorNumber) + 1);
-    setDoorNumber(newValue);
-    localStorage.setItem('doorNumber', newValue);
+  const handleStreetBlur = () => {
+    console.log('handleStreetBlur called');
+    setIsEditingStreet(false);
+    if (!streetName.trim()) {
+      setStreetName('Maple Avenue');
+      localStorage.setItem('streetName', 'Maple Avenue');
+    }
   };
 
-  const decrementNumber = () => {
-    const newValue = String(Math.max(1, Number(doorNumber) - 1));
-    setDoorNumber(newValue);
-    localStorage.setItem('doorNumber', newValue);
+  const handleNumberBlur = () => {
+    console.log('handleNumberBlur called');
+    setIsEditingNumber(false);
+    if (!doorNumber) {
+      setDoorNumber('0');
+      localStorage.setItem('doorNumber', '0');
+    }
   };
+
+  const incrementNumber = useCallback(() => {
+    console.log(`incrementNumber called, isEditingNumber=${isEditingNumber}`);
+    // First exit edit mode if we're in it
+    if (isEditingNumber) {
+      console.log('Exiting edit mode from increment');
+      setIsEditingNumber(false);
+    }
+    // Then increment the number after a slight delay to allow state update
+    setTimeout(() => {
+      const newValue = String(Number(doorNumber) + 1);
+      console.log(`Setting new value to ${newValue}`);
+      setDoorNumber(newValue);
+      localStorage.setItem('doorNumber', newValue);
+    }, 10);
+  }, [doorNumber, isEditingNumber]); 
+
+  const decrementNumber = useCallback(() => {
+    console.log(`decrementNumber called, isEditingNumber=${isEditingNumber}`);
+    // First exit edit mode if we're in it
+    if (isEditingNumber) {
+      console.log('Exiting edit mode from decrement');
+      setIsEditingNumber(false);
+    }
+    // Then decrement the number after a slight delay to allow state update
+    setTimeout(() => {
+      const newValue = String(Math.max(0, Number(doorNumber) - 1));
+      console.log(`Setting new value to ${newValue}`);
+      setDoorNumber(newValue);
+      localStorage.setItem('doorNumber', newValue);
+    }, 10);
+  }, [doorNumber, isEditingNumber]);
 
   // --- Start Day Logic ---
-  const handleStartDaySubmit = (answers) => {
+  const handleStartDaySubmit = async (answers) => {
     const today = getISODate();
     setDailyQuestions(answers);
-    setLastStartDate(today); // Keep track of the actual start date
-    setIsDayStarted(true); // Update the session state
+    setLastStartDate(today);
+    setIsDayStarted(true);
+    setIsLoadingLastLog(true); // Start loading
+    setUiReady(false); // Reset UI ready state
 
     // Persist to localStorage
     localStorage.setItem('dailyQuestions', JSON.stringify(answers));
     localStorage.setItem('lastStartDate', today);
     
-    setShowStartDayModal(false); // Close modal
+    setShowStartDayModal(false);
     console.log("Day started with answers:", answers);
 
     // Clear logs state and storage for the new day
     setLogs([]); 
     localStorage.removeItem('logs');
     console.log("UI Logs cleared for the new day.");
+    
+    // Fetch the last log from the Google Sheet
+    try {
+      console.log("Fetching last log from Google Sheet...");
+      const response = await fetch('/.netlify/functions/get-last-log');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch last log: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.lastLog) {
+        console.log("Retrieved last log:", data.lastLog);
+        // Create first log entry using the last log's data
+        await createFirstLogFromLastLog(data.lastLog, answers);
+      } else {
+        console.warn("No last log found in Google Sheet");
+        // If no last log, create a default one with current door/street
+        await createDefaultFirstLog(answers);
+      }
+    } catch (error) {
+      console.error("Error fetching last log:", error);
+      // Fallback to creating a default first log
+      await createDefaultFirstLog(answers);
+    } finally {
+      // Slight delay to ensure all state updates have processed
+      setTimeout(() => {
+        setIsLoadingLastLog(false); // End loading
+        setUiReady(true); // Signal UI is ready to render
+      }, 300); // Small delay to ensure synchronized appearance
+    }
+  };
+  
+  // Creates first log entry based on the last log from the Google Sheet
+  const createFirstLogFromLastLog = async (lastLog, currentDailyAnswers) => {
+    // Set the door number and street name from the last log
+    setDoorNumber(lastLog.doorNumber);
+    setStreetName(lastLog.streetName);
+    
+    // Save to localStorage
+    localStorage.setItem('doorNumber', lastLog.doorNumber);
+    localStorage.setItem('streetName', lastLog.streetName);
+    
+    // Create a log entry with the exact data from the last log,
+    // but with current timestamp and today's date
+    const now = new Date();
+    const interval = getCurrentInterval(now);
+    
+    // Fetch weather for completeness (since the backend expects it)
+    const weather = await fetchWeather(now);
+    
+    const firstLog = {
+      date: getISODate(now),
+      dayOfWeek: now.toLocaleDateString('en-US', { weekday: 'short' }),
+      streetName: lastLog.streetName,
+      doorNumber: lastLog.doorNumber,
+      status: lastLog.status,  // Use the actual status from the last log
+      timestamp: now.toISOString(),
+      interval,
+      weather,
+      dailyQuestions: currentDailyAnswers,
+      isFirstEntry: true, // Mark as first entry to handle special display
+      originalDate: lastLog.date, // Save original date for display
+    };
+    
+    console.log("Creating first log from last Google Sheet entry:", firstLog);
+    
+    // Add to state and localStorage
+    setLogs([firstLog]);
+    localStorage.setItem('logs', JSON.stringify([firstLog]));
+    
+    // Send to backend
+    await sendLogToBackend(firstLog);
+    return firstLog;
+  };
+  
+  // Creates a default first log if no last log is available
+  const createDefaultFirstLog = async (currentDailyAnswers) => {
+    // Use current door number and street name (already in state)
+    const now = new Date();
+    const interval = getCurrentInterval(now);
+    
+    // Fetch weather for completeness (since the backend expects it)
+    const weather = await fetchWeather(now);
+    
+    const defaultLog = {
+      date: getISODate(now),
+      dayOfWeek: now.toLocaleDateString('en-US', { weekday: 'short' }),
+      streetName,
+      doorNumber,
+      status: 'not-home',  // Default status
+      timestamp: now.toISOString(),
+      interval,
+      weather,
+      dailyQuestions: currentDailyAnswers,
+      isFirstEntry: true, // Mark as first entry
+      originalDate: getISODate(new Date(Date.now() - 86400000)), // Yesterday's date
+    };
+    
+    console.log("Creating default first log (no previous data available):", defaultLog);
+    
+    // Add to state and localStorage
+    setLogs([defaultLog]);
+    localStorage.setItem('logs', JSON.stringify([defaultLog]));
+    
+    // Send to backend
+    await sendLogToBackend(defaultLog);
+    return defaultLog;
+  };
+  
+  // Helper to send a log to the backend
+  const sendLogToBackend = async (log) => {
+    if (navigator.onLine) {
+      try {
+        const response = await fetch('/.netlify/functions/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(log),
+        });
+        
+        if (!response.ok) {
+          console.error("Failed to send first log entry to backend");
+          // Add to queue for later sync
+          const currentQueue = getQueue();
+          localStorage.setItem('logQueue', JSON.stringify([...currentQueue, log]));
+        }
+      } catch (error) {
+        console.error("Error sending first log entry:", error);
+        // Add to queue for later sync
+        const currentQueue = getQueue();
+        localStorage.setItem('logQueue', JSON.stringify([...currentQueue, log]));
+      }
+    } else {
+      // Add to queue for later sync
+      const currentQueue = getQueue();
+      localStorage.setItem('logQueue', JSON.stringify([...currentQueue, log]));
+    }
   };
 
   // Component for Modal Content
@@ -460,6 +664,18 @@ function App() {
 
   // --- Calculate Stats When Logs Change ---
   useEffect(() => {
+    // If day is not started, always show zero stats
+    if (!isDayStarted) {
+      setStats({
+        totalHouses: 0,
+        notHomePercent: 0,
+        openedPercent: 0,
+        totalEstimates: 0,
+        avgTimeBetween: 0
+      });
+      return;
+    }
+    
     if (logs.length === 0) {
       setStats({
         totalHouses: 0,
@@ -471,13 +687,27 @@ function App() {
       return;
     }
 
-    // Total houses is just the length of logs
-    const totalHouses = logs.length;
+    // Filter out the first entry (which is from the previous day)
+    const todaysLogs = logs.filter(log => !log.isFirstEntry);
+    
+    if (todaysLogs.length === 0) {
+      setStats({
+        totalHouses: 0,
+        notHomePercent: 0,
+        openedPercent: 0,
+        totalEstimates: 0,
+        avgTimeBetween: 0
+      });
+      return;
+    }
+
+    // Total houses is just the length of today's logs
+    const totalHouses = todaysLogs.length;
     
     // Count statuses
-    const notHomeCount = logs.filter(log => log.status === 'not-home').length;
-    const openedCount = logs.filter(log => log.status === 'opened').length;
-    const estimateCount = logs.filter(log => log.status === 'estimate').length;
+    const notHomeCount = todaysLogs.filter(log => log.status === 'not-home').length;
+    const openedCount = todaysLogs.filter(log => log.status === 'opened').length;
+    const estimateCount = todaysLogs.filter(log => log.status === 'estimate').length;
     
     // Calculate percentages
     const notHomePercent = Math.round((notHomeCount / totalHouses) * 100);
@@ -487,9 +717,9 @@ function App() {
     let totalTimeBetween = 0;
     let timePoints = 0;
     
-    for (let i = 0; i < logs.length - 1; i++) {
-      const currentTime = new Date(logs[i].timestamp).getTime();
-      const nextTime = new Date(logs[i + 1].timestamp).getTime();
+    for (let i = 0; i < todaysLogs.length - 1; i++) {
+      const currentTime = new Date(todaysLogs[i].timestamp).getTime();
+      const nextTime = new Date(todaysLogs[i + 1].timestamp).getTime();
       const diffInSeconds = Math.round((currentTime - nextTime) / 1000);
       
       if (!isNaN(diffInSeconds) && diffInSeconds > 0) {
@@ -507,7 +737,7 @@ function App() {
       totalEstimates: estimateCount,
       avgTimeBetween
     });
-  }, [logs]);
+  }, [logs, isDayStarted]); // Also run when isDayStarted changes
 
   // --- Render Logic ---
   // Removed: const today = getISODate(); 
@@ -534,8 +764,8 @@ function App() {
                 type="text"
                 value={streetName}
                 onChange={handleStreetNameChange}
-                onBlur={() => setIsEditingStreet(false)}
-                onKeyDown={(e) => e.key === 'Enter' && setIsEditingStreet(false)}
+                onBlur={handleStreetBlur}
+                onKeyDown={(e) => e.key === 'Enter' && handleStreetBlur()}
                 className="text-4xl text-center w-full bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script'] italic"
                 autoFocus
                 style={{fontSize: '2rem'}}
@@ -549,7 +779,12 @@ function App() {
           
           <div className="flex justify-center items-center mb-10">
             <button
-              onClick={decrementNumber}
+              onClick={(e) => {
+                console.log('Decrement button clicked');
+                // Stop event propagation
+                e.stopPropagation();
+                decrementNumber();
+              }}
               className="text-3xl px-5 py-2"
             >
               ◀
@@ -557,28 +792,46 @@ function App() {
             
             <div 
               className="cursor-pointer mx-5"
-              onClick={() => setIsEditingNumber(true)}
+              onClick={() => {
+                console.log('Number container clicked, setting isEditingNumber=true');
+                setIsEditingNumber(true);
+              }}
             >
               {isEditingNumber ? (
           <input
             type="text"
             value={doorNumber}
                   onChange={handleNumberChange}
-                  onBlur={() => setIsEditingNumber(false)}
-                  onKeyDown={(e) => e.key === 'Enter' && setIsEditingNumber(false)}
+                  onBlur={(e) => {
+                    console.log('Number input blur event');
+                    handleNumberBlur();
+                  }}
+                  onKeyDown={(e) => {
+                    console.log(`Number input keyDown: ${e.key}`);
+                    if (e.key === 'Enter') handleNumberBlur();
+                  }}
                   className="text-4xl text-center w-28 bg-transparent border-b border-gray-500 focus:outline-none focus:border-blue-500 font-['Dancing_Script'] italic"
                   autoFocus
                   style={{fontSize: '2rem'}}
+                  onClick={(e) => {
+                    console.log('Number input clicked');
+                    e.stopPropagation();
+                  }}
                 />
               ) : (
                 <div className="text-4xl text-center border-b border-transparent w-28 font-['Dancing_Script'] italic" style={{fontSize: '2rem'}}>
                   {doorNumber}
                 </div>
               )}
-        </div>
+            </div>
             
             <button
-              onClick={incrementNumber}
+              onClick={(e) => {
+                console.log('Increment button clicked');
+                // Stop event propagation
+                e.stopPropagation();
+                incrementNumber();
+              }}
               className="text-3xl px-5 py-2"
             >
               ▶
@@ -609,78 +862,99 @@ function App() {
             </div>
           )}
           
-          {/* --- NEW: Action Button Area (Conditional Rendering) --- */}
-          <div className="grid grid-cols-3 gap-6 mb-10 h-[52px]"> {/* Reduced height from 72px to 52px */}
+          {/* --- NEW: Action Button Area and Logs (Conditional Rendering) --- */}
+          <div className="grid grid-cols-3 gap-6 mb-10 h-[52px]">
             {!isDayStarted ? (
               // Show Start Day button if day hasn't started in this session
               <div className="col-span-3">
                 <button 
                     onClick={() => setShowStartDayModal(true)}
-                    className="w-full h-full bg-gray-600 text-white py-2 px-2 rounded-lg text-xl hover:bg-gray-500" /* Reduced py-4 to py-2 */
+                    className="w-full h-full bg-gray-600 text-white py-2 px-2 rounded-lg text-xl hover:bg-gray-500 active:bg-gray-700 outline-none focus:outline-none"
                 >
                     Start Day
                 </button>
               </div>
+            ) : isLoadingLastLog ? (
+              // Show loading indicator while fetching last log
+              <div className="col-span-3 flex justify-center items-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500"></div>
+              </div>
             ) : (
-              // Show action buttons if day has started
+              // Show action buttons if day has started and loading is complete
               <>
-                <button onClick={() => handleSubmit('not-home')} className="bg-yellow-600 text-white py-2 px-2 rounded-lg text-xl">Not Home</button>
-                <button onClick={() => handleSubmit('opened')} className="bg-green-600 text-white py-2 px-2 rounded-lg text-xl">Opened</button>
-                <button onClick={() => handleSubmit('estimate')} className="bg-blue-600 text-white py-2 px-2 rounded-lg text-xl">Estimate</button>
+                <button onClick={() => handleSubmit('not-home')} className="bg-yellow-600 text-white py-2 px-2 rounded-lg text-xl active:bg-yellow-700 outline-none focus:outline-none">Not Home</button>
+                <button onClick={() => handleSubmit('opened')} className="bg-green-600 text-white py-2 px-2 rounded-lg text-xl active:bg-green-700 outline-none focus:outline-none">Opened</button>
+                <button onClick={() => handleSubmit('estimate')} className="bg-blue-600 text-white py-2 px-2 rounded-lg text-xl active:bg-blue-700 outline-none focus:outline-none">Estimate</button>
               </>
             )}
           </div>
         </div>
         
-        <div 
-          className="overflow-y-auto scrollbar-hide fade-scroll-edges flex-grow"
-        >
-          {logs.map((log, index) => (
-            <LogItem 
-              key={log.timestamp} // Use timestamp as key
-              log={log}
-              previousTimestamp={logs[index + 1]?.timestamp} // Pass timestamp of the previous log
-              onDelete={handleDeleteLog} // Pass the delete handler
-            />
-          ))}
-        </div>
-        
-        {/* Stats Section - Fixed at the bottom */}
-        {isDayStarted && (
-          <div style={{
-            position: 'fixed',
-            bottom: 5,
-            left: 0,
-            width: '100%',
-            display: 'flex',
-            justifyContent: 'center',
-            zIndex: 10
-          }}>
-            <table style={{
-              maxWidth: '390px',
-              width: '100%',
-              borderTopLeftRadius: '8px',
-              borderTopRightRadius: '8px'
-            }}>
-              <tbody>
-                <tr>
-                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalHouses}</b></td>
-                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.notHomePercent}%</b></td>
-                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.openedPercent}%</b></td>
-                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalEstimates}</b></td>
-                  <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.avgTimeBetween}s</b></td>
-                </tr>
-                <tr>
-                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Houses</td>
-                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Not Home</td>
-                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Opened</td>
-                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Estimates</td>
-                  <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Avg Time</td>
-                </tr>
-              </tbody>
-            </table>
+        {/* Only show logs if day is started and UI is ready */}
+        {isDayStarted && uiReady && (
+          <div 
+            className="overflow-y-auto scrollbar-hide fade-scroll-edges flex-grow"
+            style={{
+              paddingBottom: "120px", /* Add padding to allow scrolling up to reveal the last log */
+              scrollbarWidth: "none", /* Hide scrollbar in Firefox */
+              msOverflowStyle: "none" /* Hide scrollbar in IE/Edge */
+            }}
+          >
+            {logs.map((log, index) => (
+              <LogItem 
+                key={log.timestamp}
+                log={log}
+                previousTimestamp={logs[index + 1]?.timestamp}
+                onDelete={handleDeleteLog}
+              />
+            ))}
           </div>
         )}
+        
+        {/* Show loading spinner in logs area if loading */}
+        {isDayStarted && isLoadingLastLog && (
+          <div className="flex-grow flex justify-start items-start pt-8">
+            <div className="text-center w-full">
+              <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mx-auto mb-4"></div>
+              <p className="text-white text-xl">Loading</p>
+            </div>
+          </div>
+        )}
+        
+        {/* Stats Section - Always visible */}
+        <div style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'center',
+          zIndex: 10
+        }}>
+          <table style={{
+            maxWidth: '390px',
+            width: '100%',
+            borderTopLeftRadius: '8px',
+            borderTopRightRadius: '8px'
+          }}>
+            <tbody>
+              <tr>
+                <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalHouses}</b></td>
+                <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.notHomePercent}%</b></td>
+                <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.openedPercent}%</b></td>
+                <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalEstimates}</b></td>
+                <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.avgTimeBetween}s</b></td>
+              </tr>
+              <tr>
+                <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Houses</td>
+                <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Not Home</td>
+                <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Opened</td>
+                <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Estimates</td>
+                <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Avg Time</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
