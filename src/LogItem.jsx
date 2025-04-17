@@ -24,7 +24,7 @@ function formatDate(dateString) {
   return `${day}/${month}/${year}`;
 }
 
-function LogItem({ log, previousTimestamp, onDelete }) {
+function LogItem({ log, previousTimestamp, previousLogIsFirstEntry, onDelete }) {
   const [{ x }, api] = useSpring(() => ({ x: 0 }));
   const itemRef = useRef(null);
   const [itemWidth, setItemWidth] = useState(0);
@@ -82,10 +82,14 @@ function LogItem({ log, previousTimestamp, onDelete }) {
   // Calculate time display (elapsed or initial time)
   let timeDisplay = '--'; // Default
   
-  // Special handling for first entry - show date instead of time
   if (log.isFirstEntry) {
-    timeDisplay = formatDate(log.originalDate || log.date);
+    // 1. Automatic First Entry (from previous day)
+    timeDisplay = formatDate(log.originalDate || log.date); 
+  } else if (previousLogIsFirstEntry) {
+    // 2. First Manual Entry of the day
+    timeDisplay = new Date(log.timestamp).toLocaleTimeString([], { hour: 'numeric', minute:'2-digit' });
   } else if (previousTimestamp) {
+    // 3. Subsequent Manual Entries
     const current = new Date(log.timestamp);
     const previous = new Date(previousTimestamp);
     const diffSeconds = Math.round((current - previous) / 1000);
@@ -93,8 +97,8 @@ function LogItem({ log, previousTimestamp, onDelete }) {
       timeDisplay = formatElapsedTime(diffSeconds);
     }
   } else {
-    // For the first item (that isn't marked as first entry), show its timestamp
-    timeDisplay = new Date(log.timestamp).toLocaleTimeString([], { hour: 'numeric', minute:'2-digit' });
+     // Fallback for the very first manual log if the automatic one somehow wasn't there
+     timeDisplay = new Date(log.timestamp).toLocaleTimeString([], { hour: 'numeric', minute:'2-digit' });
   }
   
   // Format status for display

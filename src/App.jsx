@@ -1114,14 +1114,20 @@ function App() {
               msOverflowStyle: "none" /* Hide scrollbar in IE/Edge */
             }}
           >
-            {logs.map((log, index) => (
-              <LogItem 
-                key={log.timestamp}
-                log={log}
-                previousTimestamp={logs[index + 1]?.timestamp}
-                onDelete={handleDeleteLog}
-              />
-            ))}
+            {logs.map((log, index) => {
+              const previousLog = logs[index + 1];
+              const previousLogIsFirstEntry = previousLog?.isFirstEntry ?? false;
+              
+              return (
+                <LogItem 
+                  key={log.timestamp}
+                  log={log}
+                  previousTimestamp={previousLog?.timestamp}
+                  previousLogIsFirstEntry={previousLogIsFirstEntry}
+                  onDelete={handleDeleteLog}
+                />
+              );
+            })}
           </div>
         )}
         
@@ -1157,7 +1163,13 @@ function App() {
                 <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.notHomePercent}%</b></td>
                 <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.openedPercent}%</b></td>
                 <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.totalEstimates}</b></td>
-                <td style={{textAlign: 'center'}}><b style={{color: 'white'}}>{stats.avgTimeBetween}s</b></td>
+                <td style={{textAlign: 'center'}}>
+                  <b style={{color: 'white'}}>
+                    {stats.avgTimeBetween >= 60
+                      ? `${Math.floor(stats.avgTimeBetween / 60)}m ${stats.avgTimeBetween % 60}s`
+                      : `${stats.avgTimeBetween}s`}
+                  </b>
+                </td>
               </tr>
               <tr>
                 <td style={{textAlign: 'center', fontSize: '0.75rem', color: 'white'}}>Houses</td>
