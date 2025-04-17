@@ -110,7 +110,8 @@ exports.handler = async (event) => {
       streetName,
       doorNumber,
       status,
-      timestamp
+      timestamp,
+      user
     ];
 
     console.log('Attempting to append to spreadsheet:', spreadsheetId);

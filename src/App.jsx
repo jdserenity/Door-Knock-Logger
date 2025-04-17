@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import LogItem from './LogItem'; // Import the new component
+import { v4 as uuidv4 } from 'uuid';
 
 // Helper function to format date as YYYY-MM-DD
 const getISODate = (date = new Date()) => {
@@ -265,6 +266,7 @@ function App() {
       dailyQuestions: currentDailyAnswers,
       isFirstEntry: true, // Mark as first entry to handle special display
       originalDate: lastLog.date, // Save original date for display
+      user: currentDailyAnswers.user // Add user from daily answers
     };
     
     console.log("Creating first log from last Google Sheet entry:", firstLog);
@@ -299,6 +301,7 @@ function App() {
       dailyQuestions: currentDailyAnswers,
       isFirstEntry: true, // Mark as first entry
       originalDate: getISODate(new Date(Date.now() - 86400000)), // Yesterday's date
+      user: currentDailyAnswers.user // Add user from daily answers
     };
     
     console.log("Creating default first log (no previous data available):", defaultLog);
@@ -344,46 +347,256 @@ function App() {
   // Component for Modal Content
   const StartDayModalContent = () => {
     const [answers, setAnswers] = useState({ groomed: 'Yes', mood: 'Yes', jacket: 'No' });
+    const [user, setUser] = useState('');
+    const [userMode, setUserMode] = useState('loading'); // 'loading', 'known', 'select', 'new'
+    const [knownUsers, setKnownUsers] = useState([]);
+    const [newUserName, setNewUserName] = useState('');
+
+    useEffect(() => {
+      // Get device ID - this uniquely identifies the device
+      const deviceId = localStorage.getItem('deviceId');
+      
+      // If no device ID yet, create one
+      if (!deviceId) {
+        localStorage.setItem('deviceId', uuidv4());
+      }
+      
+      // Check if this device has a user associated with it
+      const storedUserId = localStorage.getItem('userId');
+      
+      if (storedUserId) {
+        // Device has a user - retrieve the name
+        const userName = localStorage.getItem(`user_${storedUserId}`);
+        if (userName) {
+          setUser(userName);
+          setUserMode('known');
+        } else {
+          // User ID exists but name is missing - handle edge case
+          setUserMode('select');
+        }
+      } else {
+        // Get all existing users for the dropdown
+        const allUsers = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('user_')) {
+            allUsers.push(localStorage.getItem(key));
+          }
+        }
+        
+        setKnownUsers(allUsers);
+        
+        // No user associated with this device
+        if (allUsers.length === 0) {
+          // No users exist yet, go to new user mode
+          setUserMode('new');
+        } else {
+          // Show selection with existing users
+          setUserMode('select');
+        }
+      }
+    }, []);
+
+    const handleUserChange = (e) => {
+      const selectedValue = e.target.value;
+      if (selectedValue === "add-new") {
+        setUserMode('new');
+        setUser('');
+      } else {
+        setUser(selectedValue);
+      }
+    };
+
+    const handleNewUserSubmit = () => {
+      if (!newUserName.trim()) {
+        alert("Please enter a user name");
+        return;
+      }
+      
+      // Update local state
+      setUser(newUserName);
+      setUserMode('known');
+      
+      // Create new user ID and store it
+      const userId = uuidv4();
+      localStorage.setItem(`user_${userId}`, newUserName);
+      
+      // Associate this device with this user
+      localStorage.setItem('userId', userId);
+      
+      // Update known users list
+      const updatedUsers = [...knownUsers, newUserName];
+      setKnownUsers(updatedUsers);
+    };
 
     const handleChange = (e) => {
       setAnswers({ ...answers, [e.target.name]: e.target.value });
     };
 
+    const handleFormSubmit = (e) => {
+      e.preventDefault();
+      
+      // Validate that we have a user
+      if (!user) {
+        alert("Please select or create a user");
+        return;
+      }
+      
+      // If we're in select mode, save the user association
+      if (userMode === 'select') {
+        // Find the userId for this username
+        let selectedUserId = null;
+        
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('user_')) {
+            const storedName = localStorage.getItem(key);
+            if (storedName === user) {
+              selectedUserId = key.replace('user_', '');
+              break;
+            }
+          }
+        }
+        
+        if (selectedUserId) {
+          // Associate this device with the selected user
+          localStorage.setItem('userId', selectedUserId);
+        }
+      }
+      
+      // Add the user to the answers object
+      const answersWithUser = { ...answers, user };
+      
+      // Submit to parent component
+      handleStartDaySubmit(answersWithUser);
+    };
+
+    // Render loading state
+    if (userMode === 'loading') {
+      return (
+        <div className="text-center py-8">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-b-4 border-blue-500 mx-auto mb-4"></div>
+          <p>Loading user information...</p>
+        </div>
+      );
+    }
+
     return (
-      <form onSubmit={(e) => { e.preventDefault(); handleStartDaySubmit(answers); }}>
+      <form onSubmit={handleFormSubmit}>
         <h2 className="text-2xl font-bold mb-6 text-center">Daily Check-in</h2>
         
+        {/* User Selection UI - changes based on userMode */}
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-gray-400 mb-1">User</label>
+          
+          {userMode === 'known' && (
+            // Known user - show disabled dropdown
+            <select 
+              disabled 
+              className="w-full bg-gray-700 text-gray-300 rounded-md p-2 cursor-not-allowed"
+            >
+              <option>{user}</option>
+            </select>
+          )}
+          
+          {userMode === 'select' && (
+            // User selection mode - active dropdown
+            <select 
+              value={user}
+              onChange={handleUserChange}
+              className="w-full bg-gray-600 text-white rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required
+            >
+              <option value="">Select your name</option>
+              {knownUsers.map((name, index) => (
+                <option key={index} value={name}>{name}</option>
+              ))}
+              <option value="add-new">+ Add new user</option>
+            </select>
+          )}
+          
+          {userMode === 'new' && (
+            // New user creation mode
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newUserName}
+                onChange={(e) => setNewUserName(e.target.value)}
+                placeholder="Enter your name"
+                className="flex-1 bg-gray-600 text-white rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+              <button 
+                type="button"
+                onClick={handleNewUserSubmit}
+                className="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-500"
+              >
+                Save
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Updated Groomed Question */}
         <fieldset className="mb-5">
           <legend className="mb-2 font-medium">Are you groomed well today?</legend>
           <div className="flex gap-x-4">
-             <label className="flex items-center gap-x-2"><input type="radio" name="groomed" value="Yes" checked={answers.groomed === 'Yes'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> Yes</label>
-             <label className="flex items-center gap-x-2"><input type="radio" name="groomed" value="No" checked={answers.groomed === 'No'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> No</label>
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="groomed" value="Yes" checked={answers.groomed === 'Yes'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              Yes
+            </label>
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="groomed" value="Kind of" checked={answers.groomed === 'Kind of'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              Kind of
+            </label>
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="groomed" value="No" checked={answers.groomed === 'No'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              No
+            </label>
           </div>
         </fieldset>
 
+        {/* Updated Mood Question */}
         <fieldset className="mb-5">
-            <legend className="mb-2 font-medium">Are you in a good mood?</legend>
-            <div className="flex gap-x-4">
-              <label className="flex items-center gap-x-2"><input type="radio" name="mood" value="Yes" checked={answers.mood === 'Yes'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> Yes</label>
-              <label className="flex items-center gap-x-2"><input type="radio" name="mood" value="No" checked={answers.mood === 'No'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> No</label>
-            </div>
+          <legend className="mb-2 font-medium">Are you in a good mood?</legend>
+          <div className="flex gap-x-4">
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="mood" value="Yes" checked={answers.mood === 'Yes'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              Yes
+            </label>
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="mood" value="Kind of" checked={answers.mood === 'Kind of'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              Kind of
+            </label>
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="mood" value="No" checked={answers.mood === 'No'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              No
+            </label>
+          </div>
         </fieldset>
 
+        {/* Jacket Question (unchanged) */}
         <fieldset className="mb-6">
-           <legend className="mb-2 font-medium">Jacket covering company shirt?</legend>
-           <div className="flex gap-x-4">
-              <label className="flex items-center gap-x-2"><input type="radio" name="jacket" value="Yes" checked={answers.jacket === 'Yes'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> Yes</label>
-              <label className="flex items-center gap-x-2"><input type="radio" name="jacket" value="No" checked={answers.jacket === 'No'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> No</label>
-           </div>
+          <legend className="mb-2 font-medium">Jacket covering company shirt?</legend>
+          <div className="flex gap-x-4">
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="jacket" value="Yes" checked={answers.jacket === 'Yes'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              Yes
+            </label>
+            <label className="flex items-center gap-x-2">
+              <input type="radio" name="jacket" value="No" checked={answers.jacket === 'No'} onChange={handleChange} className="form-radio h-4 w-4 text-blue-600"/> 
+              No
+            </label>
+          </div>
         </fieldset>
         
         <button type="submit" className="w-full bg-green-600 text-white py-2 px-4 rounded-lg text-lg hover:bg-green-500">Confirm</button>
-         <button 
-            type="button" // Important: Prevents form submission
-            onClick={() => setShowStartDayModal(false)} 
-            className="mt-3 w-full bg-gray-600 text-white py-2 px-4 rounded-lg text-lg hover:bg-gray-500"
-          >
-            Cancel
+        <button 
+          type="button"
+          onClick={() => setShowStartDayModal(false)} 
+          className="mt-3 w-full bg-gray-600 text-white py-2 px-4 rounded-lg text-lg hover:bg-gray-500"
+        >
+          Cancel
         </button>
       </form>
     );
@@ -484,7 +697,8 @@ function App() {
       timestamp: timestamp.toISOString(),
       interval,
       weather: { temp: weather.temp, condition: weather.condition },
-      dailyQuestions: currentDailyQuestions
+      dailyQuestions: currentDailyQuestions,
+      user: currentDailyQuestions.user // Add user from daily questions
     };
 
     console.log("Submitting Log:", log);
