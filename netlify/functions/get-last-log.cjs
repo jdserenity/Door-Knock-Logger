@@ -18,6 +18,10 @@ exports.handler = async (event) => {
       return { statusCode: 500, body: JSON.stringify({ error: 'Server configuration error (Spreadsheet ID)' }) };
     }
 
+    // Parse query parameters if a user is specified
+    const queryParams = event.queryStringParameters || {};
+    const user = queryParams.user || null;
+    
     // --- Authenticate with Google Sheets API ---
     const auth = new google.auth.GoogleAuth({
       credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
@@ -25,42 +29,71 @@ exports.handler = async (event) => {
     });
     const sheets = google.sheets({ version: 'v4', auth });
     const spreadsheetId = process.env.SPREADSHEET_ID;
-    const sheetName = 'Sheet1';
+    const lastHouseSheet = 'Last House Knocked';
     
-    console.log('Fetching all data from sheet to find the last entry');
+    console.log('Fetching last house knocked from sheet');
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:L`, // Get all relevant columns
+      range: `${lastHouseSheet}!A:C`, // Get all rows
     });
 
     const rows = response.data.values;
-    if (!rows || rows.length <= 1) { // No data or just header row
-      console.log('No data found in sheet');
+    if (!rows || rows.length < 1) { // Empty sheet
+      console.log('No data found in Last House Knocked sheet');
       return { 
         statusCode: 404, 
         body: JSON.stringify({ 
-          error: 'No data found in sheet',
-          lastLog: null
+          error: 'No data found in Last House Knocked sheet',
+          lastLog: {
+            streetName: 'Maple Avenue',
+            doorNumber: '1',
+            status: 'not-home',
+            timestamp: new Date().toISOString()
+          }
         }) 
       };
     }
 
-    // Get the last row (most recent entry, excluding header)
-    const lastRow = rows[rows.length - 1];
-    console.log('Last row from sheet:', lastRow);
-
-    // Map the last row to a log object with just the fields we need for the first entry
-    // Columns order (based on log.cjs): Date, DayOfWeek, Groomed, Mood, Jacket, Condition, Temp, Interval, Street, Door, Status, Timestamp
+    // If a user is specified, find their last house
+    let lastHouse = null;
+    if (user) {
+      console.log(`Looking for last house for user: ${user}`);
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i][0] === user) {
+          lastHouse = {
+            user: rows[i][0],
+            streetName: rows[i][1] || 'Maple Avenue',
+            doorNumber: rows[i][2] || '1'
+          };
+          break;
+        }
+      }
+    }
+    
+    // If no user specified or user not found, use the first entry as default
+    if (!lastHouse) {
+      console.log('No matching user found, using default house');
+      lastHouse = {
+        user: rows[0][0] || 'Unknown',
+        streetName: rows[0][1] || 'Maple Avenue',
+        doorNumber: rows[0][2] || '1'
+      };
+    }
+    
+    console.log('Last house found:', lastHouse);
+    
+    // Format as a log entry for backward compatibility
     const lastLog = {
-      date: lastRow[0] || '',
-      dayOfWeek: lastRow[1] || '',
-      streetName: lastRow[8] || '', // Column I (index 8)
-      doorNumber: lastRow[9] || '', // Column J (index 9)
-      status: lastRow[10] || '',    // Column K (index 10)
-      timestamp: lastRow[11] || ''  // Column L (index 11)
+      date: new Date().toISOString().split('T')[0],
+      dayOfWeek: new Date().toLocaleDateString('en-US', { weekday: 'short' }),
+      streetName: lastHouse.streetName,
+      doorNumber: lastHouse.doorNumber,
+      status: 'not-home', // Default status
+      timestamp: new Date().toISOString(),
+      user: lastHouse.user
     };
 
-    console.log('Formatted last log for new entry:', lastLog);
+    console.log('Created last log entry:', lastLog);
     return { 
       statusCode: 200, 
       body: JSON.stringify({ lastLog }) 
