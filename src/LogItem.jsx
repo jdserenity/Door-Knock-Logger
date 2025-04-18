@@ -54,12 +54,12 @@ function LogItem({ log, previousTimestamp, previousLogIsFirstEntry, onDelete }) 
     
     // If released and dragged past 50% threshold
     if (last && mx < threshold) {
-      console.log(`Threshold passed (${mx}px < ${threshold}px), triggering delete for ${log.timestamp}`);
+      console.log(`Threshold passed (${mx}px < ${threshold}px), triggering delete for log`, log);
       // Animate off-screen
       api.start({ 
         x: -windowWidth, 
         config: { tension: 200, friction: 30 }, 
-        onRest: () => onDelete(log.timestamp)
+        onRest: () => onDelete(log)
       });
     }
     // If released but not past threshold, spring back

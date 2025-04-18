@@ -7,12 +7,40 @@ const getISODate = (date = new Date()) => {
   return date.toISOString().split('T')[0];
 };
 
-// Helper function to get 30-min interval string (e.g., "14:00")
+// Helper function to get 30-min interval string in format "2pm-2:30pm"
 const getCurrentInterval = (date = new Date()) => {
-  const hours = date.getHours();
+  const hours24 = date.getHours();
   const minutes = date.getMinutes();
   const intervalMinutes = Math.floor(minutes / 30) * 30;
-  return `${String(hours).padStart(2, '0')}:${String(intervalMinutes).padStart(2, '0')}`;
+  
+  // Convert to 12-hour format with am/pm
+  let hours12 = hours24 % 12;
+  if (hours12 === 0) hours12 = 12; // Convert 0 to 12 for 12am/pm
+  const ampm = hours24 < 12 ? 'am' : 'pm';
+  
+  // Format start time (e.g., "2pm" or "2:30pm")
+  const startTime = `${hours12}${intervalMinutes === 0 ? '' : ':' + String(intervalMinutes).padStart(2, '0')}${ampm}`;
+  
+  // Calculate end time
+  let endHours24 = hours24;
+  let endMinutes = intervalMinutes + 30;
+  
+  // Handle minute overflow
+  if (endMinutes >= 60) {
+    endHours24 += 1;
+    endMinutes = 0;
+  }
+  
+  // Convert end time to 12-hour format
+  let endHours12 = endHours24 % 12;
+  if (endHours12 === 0) endHours12 = 12;
+  const endAmPm = endHours24 < 12 ? 'am' : 'pm';
+  
+  // Format end time
+  const endTime = `${endHours12}${endMinutes === 0 ? '' : ':' + String(endMinutes).padStart(2, '0')}${endAmPm}`;
+  
+  // Combine into interval string
+  return `${startTime}-${endTime}`;
 };
 
 // Simple Modal Component
@@ -81,7 +109,8 @@ function App() {
       setDailyQuestions(JSON.parse(savedDailyQuestions));
       setLastStartDate(savedLastStartDate);
       console.log("Loaded data for already started day, but requires manual start in this session (for testing).");
-      // setIsDayStarted(true); // <--- COMMENTED OUT FOR DEV, RESTORE FOR PRODUCTION
+      setIsDayStarted(true); // <--- COMMENTED OUT FOR DEV, RESTORE FOR PRODUCTION
+      setUiReady(true); // Add this line to ensure logs are displayed
     } else {
       // If it's a new day or data is missing, clear potentially stale daily data
       console.log("New day or missing daily data. Requires 'Start Day'.");
@@ -206,7 +235,8 @@ function App() {
     // Fetch the last log from the Google Sheet
     try {
       console.log("Fetching last log from Google Sheet...");
-      const response = await fetch('/.netlify/functions/get-last-log');
+      // Include the user in the query parameters
+      const response = await fetch(`/.netlify/functions/get-last-log?user=${encodeURIComponent(answers.user)}`);
       
       if (!response.ok) {
         throw new Error(`Failed to fetch last log: ${response.status}`);
@@ -346,7 +376,11 @@ function App() {
 
   // Component for Modal Content
   const StartDayModalContent = () => {
-    const [answers, setAnswers] = useState({ groomed: 'Yes', mood: 'Yes', jacket: 'No' });
+    const [answers, setAnswers] = useState({ 
+      groomed: 'Yes', 
+      jacket: 'No', 
+      mood: 'Yes' 
+    });
     const [user, setUser] = useState('');
     const [userMode, setUserMode] = useState('loading'); // 'loading', 'known', 'select', 'new'
     const [knownUsers, setKnownUsers] = useState([]);
@@ -537,7 +571,7 @@ function App() {
           )}
         </div>
 
-        {/* Updated Groomed Question */}
+        {/* Groomed Question */}
         <fieldset className="mb-5">
           <legend className="mb-2 font-medium">Are you groomed well today?</legend>
           <div className="flex gap-x-4">
@@ -556,7 +590,7 @@ function App() {
           </div>
         </fieldset>
 
-        {/* Updated Mood Question */}
+        {/* Mood Question */}
         <fieldset className="mb-5">
           <legend className="mb-2 font-medium">Are you in a good mood?</legend>
           <div className="flex gap-x-4">
@@ -575,7 +609,7 @@ function App() {
           </div>
         </fieldset>
 
-        {/* Jacket Question (unchanged) */}
+        {/* Jacket Question */}
         <fieldset className="mb-6">
           <legend className="mb-2 font-medium">Jacket covering company shirt?</legend>
           <div className="flex gap-x-4">
@@ -807,23 +841,27 @@ function App() {
   }, []); // Empty dependency array - runs once on mount
 
   // --- Deletion Handler ---
-  const handleDeleteLog = async (timestampToDelete) => {
-    console.log("Initiating delete for log:", timestampToDelete);
+  const handleDeleteLog = async (log) => {
+    console.log("Initiating delete for log:", log);
 
     // 1. Optimistically remove from UI state
     const originalLogs = [...logs]; // Keep a copy in case backend fails
-    const updatedLogs = logs.filter(log => log.timestamp !== timestampToDelete);
+    const updatedLogs = logs.filter(l => l !== log);
     setLogs(updatedLogs);
 
     // 2. Remove from local storage log history
     localStorage.setItem('logs', JSON.stringify(updatedLogs));
 
-    // 3. Attempt to delete from backend (Google Sheet)
+    // 3. Send request to decrement the appropriate count in the interval-based sheet
     try {
       const response = await fetch('/.netlify/functions/delete-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timestampToDelete }),
+        body: JSON.stringify({
+          date: log.date,
+          interval: log.interval,
+          status: log.status
+        }),
       });
 
       if (!response.ok) {
@@ -839,27 +877,14 @@ function App() {
           console.error('Backend delete failed with non-JSON response:', response.status);
         }
         
-        // Only show alert for non-404 errors (404 = item not found, which is expected sometimes)
-        if (response.status !== 404) {
-          alert(`Failed to delete log from sheet: ${errorMessage}`);
-        } else {
-          console.warn(`Item with timestamp ${timestampToDelete} not found in sheet but was deleted from UI`);
-        }
+        // Show error message
+        alert(`Failed to delete log entry: ${errorMessage}`);
         
-        // Don't revert the UI for 404s - we want to remove items that don't exist in the backend
-        if (response.status !== 404) {
-          setLogs(originalLogs); // Restore original logs in UI
-          localStorage.setItem('logs', JSON.stringify(originalLogs)); // Restore local storage
-        }
+        // Restore original logs in UI and localStorage
+        setLogs(originalLogs);
+        localStorage.setItem('logs', JSON.stringify(originalLogs));
       } else {
         console.log("Log successfully deleted from backend.");
-        // Optionally, clean up the offline queue too
-        const currentQueue = getQueue();
-        const updatedQueue = currentQueue.filter(log => log.timestamp !== timestampToDelete);
-        if (currentQueue.length !== updatedQueue.length) {
-          localStorage.setItem('logQueue', JSON.stringify(updatedQueue));
-          console.log('Removed deleted log from offline queue.');
-        }
       }
     } catch (error) {
       // Network or other fetch error
